@@ -57,7 +57,8 @@ jobs:
         run: |
           curl -L -o ffmpeg-release.zip https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
           unzip -q ffmpeg-release.zip -d ffmpeg-extracted
-          FFDIR=$(find ffmpeg-extracted -maxdepth 1 -type d -name "ffmpeg-*")
+          FFDIR=$(find ffmpeg-extracted -mindepth 1 -maxdepth 1 -type d -name "ffmpeg-*")
+          echo "Found ffmpeg dir: $FFDIR"
           cp "$FFDIR/bin/ffmpeg.exe" ./ffmpeg.exe
           ls -la ffmpeg.exe
 

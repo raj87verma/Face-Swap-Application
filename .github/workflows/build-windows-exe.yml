@@ -1,0 +1,98 @@
+name: Build Windows EXE
+
+# Builds a fully self-contained Windows executable for FaceSwap Studio:
+#   - all Python dependencies bundled (PyInstaller --onefile)
+#   - ffmpeg.exe bundled (downloaded from a static build)
+#   - the classical dlib facial-landmark model bundled
+# The resulting .exe requires NO separate installation steps for the
+# end user: no Python, no pip install, no ffmpeg setup.
+#
+# Triggers:
+#   - Push to main (whenever the app code changes)
+#   - Manual run from the Actions tab ("Run workflow")
+# Output:
+#   - Uploaded as a build artifact (Actions tab -> this run -> Artifacts)
+#   - Also published to a GitHub Release tagged "latest-build" so there is
+#     always a stable download link.
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Download facial landmark model (classical CV, not a generative model)
+        shell: bash
+        run: |
+          mkdir -p models
+          curl -L -o models/shape_predictor_68_face_landmarks.dat.bz2 \
+            https://github.com/davisking/dlib-models/raw/master/shape_predictor_68_face_landmarks.dat.bz2
+          python -c "import bz2; open('models/shape_predictor_68_face_landmarks.dat','wb').write(bz2.BZ2File('models/shape_predictor_68_face_landmarks.dat.bz2','rb').read())"
+          rm models/shape_predictor_68_face_landmarks.dat.bz2
+          ls -la models/
+
+      - name: Download ffmpeg.exe (static build, bundled into the app)
+        shell: bash
+        run: |
+          curl -L -o ffmpeg-release.zip https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
+          unzip -q ffmpeg-release.zip -d ffmpeg-extracted
+          FFDIR=$(find ffmpeg-extracted -maxdepth 1 -type d -name "ffmpeg-*")
+          cp "$FFDIR/bin/ffmpeg.exe" ./ffmpeg.exe
+          ls -la ffmpeg.exe
+
+      - name: Build the executable with PyInstaller
+        run: |
+          pyinstaller --name "FaceSwapStudio" --onefile --windowed `
+            --add-data "models/shape_predictor_68_face_landmarks.dat;models" `
+            --add-binary "ffmpeg.exe;." `
+            --collect-all librosa `
+            --collect-all soundfile `
+            --collect-data dlib `
+            main.py
+
+      - name: Verify build output
+        shell: bash
+        run: |
+          ls -la dist/
+          test -f dist/FaceSwapStudio.exe && echo "EXE built successfully"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FaceSwapStudio-windows-exe
+          path: dist/FaceSwapStudio.exe
+          retention-days: 90
+
+      - name: Publish/update GitHub Release with the EXE
+        shell: bash
+        run: |
+          gh release delete latest-build --yes || true
+          git tag -f latest-build
+          git push origin latest-build --force
+          gh release create latest-build dist/FaceSwapStudio.exe \
+            --title "FaceSwap Studio - Latest Windows Build" \
+            --notes "Automatically built by GitHub Actions from commit ${{ github.sha }}. Download FaceSwapStudio.exe below and double-click to run -- no installation required." \
+            --latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

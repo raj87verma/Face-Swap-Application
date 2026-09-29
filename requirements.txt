@@ -1,0 +1,18 @@
+# FaceSwap Studio - dependencies
+# Classical Computer Vision face swap (NO deep-learning / generative AI face models)
+
+numpy==1.26.4
+scipy==1.11.4
+opencv-contrib-python==4.9.0.80   # provides cv2.face (LBPH recognizer) + core CV ops
+PyQt5==5.15.10                    # desktop GUI
+
+# Classical HOG face detector + 68-point landmark predictor.
+# dlib-bin ships prebuilt wheels (Windows/Linux/macOS) so no C++ compiler
+# is required to install it. If you prefer building from source instead,
+# replace this line with: dlib==19.24.2
+dlib-bin==20.0.1
+
+# Audio / voice processing (classical DSP, no AI voice cloning)
+librosa==0.10.1
+soundfile==0.12.1
+pydub==0.25.1

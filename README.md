@@ -11,7 +11,7 @@ signal processing.
 |---|---|---|
 | Face detection | dlib HOG + Linear SVM detector (fallback: OpenCV Haar Cascade) | Small classical detector, not generative AI |
 | Facial landmarks | dlib 68-point Ensemble-of-Regression-Trees predictor (Kazemi & Sullivan, 2014) | Shape-regression algorithm, not a face-generation model |
-| Character identification (who is who, across multiple people/angles) | OpenCV LBPH (Local Binary Patterns Histograms) recognizer | Classical texture-histogram method, not a neural embedding |
+| Face-to-character assignment (which detected face gets which reference, when multiple characters are enabled) | Left-to-right position matching against the checked character order | Simple deterministic heuristic, not ML-based recognition |
 | Face swap | Delaunay triangulation + affine warp per triangle + `cv2.seamlessClone` (Poisson blending) | Pure geometric warping + classical blending -- **no GAN/diffusion/autoencoder** |
 | Voice change | Phase-vocoder pitch shift + resample-based formant shift (librosa) | Classical DSP -- **no AI voice cloning/conversion** |
 
@@ -48,10 +48,12 @@ Video & Face Swap, Voice Change).
 - Import a video (short or long clip).
 - Create multiple "characters," each with multiple reference images from
   different angles (front, left, right, up, down, profile, etc.).
-- Automatically detect faces in the video, identify which known character
-  each belongs to (supports multiple different people in one video, each
-  mapped to their own reference), and swap in the geometrically closest
-  matching reference angle for the character.
+- Automatically detect every face in the video and swap in the
+  geometrically closest-matching reference angle for the assigned
+  character. With one character enabled, every detected face is swapped
+  with it. With multiple characters enabled, faces are assigned to
+  characters by left-to-right position in the frame (see Known
+  limitations below).
 - Optional voice change:
   - Manual pitch (semitones) + formant ratio adjustment.
   - "Match target voice" mode: analyze a short sample of a target voice
@@ -114,9 +116,10 @@ python main.py
 
 2. **Import Video & Face Swap tab**
    - Browse and select your video clip.
-   - Check the characters you want swapped into the video (each detected
-     face in the video is automatically matched to the closest-known
-     character via the LBPH recognizer trained on your reference images).
+   - Check the characters you want swapped into the video. With a single
+     character checked, every face detected in the video is swapped with
+     it. With multiple characters checked, faces are assigned left-to-right
+     per frame in the order they're checked here.
    - Click "Start Face Swap Processing" and wait for the progress bar to
      complete.
    - Click "Save Output Video As..." to export.
@@ -144,7 +147,6 @@ FaceSwapStudio/
 └── app/
     ├── core/
     │   ├── face_detector.py       # detection + 68-point landmarks
-    │   ├── character_matcher.py   # LBPH-based identity matching
     │   ├── reference_manager.py   # character/reference image storage
     │   ├── face_swapper.py        # Delaunay warp + seamless blend
     │   └── video_processor.py     # frame loop + ffmpeg mux
@@ -181,6 +183,13 @@ plus all Python dependencies into `dist\FaceSwapStudio.exe`.
 
 ## Known limitations (inherent to the classical, non-AI approach)
 
+- With **multiple characters enabled at once**, faces are assigned to
+  characters purely by left-to-right position in each frame (matched
+  against the order you checked them in). This can misassign faces if
+  people cross paths, if someone leaves/enters the frame, or if the
+  number of visible faces changes between frames. For reliable results
+  with multiple people, process one character at a time (enable only one
+  character per run) when possible.
 - Extreme head turns/occlusions (e.g. profile > ~60°, hand over face) may
   fail to detect landmarks reliably -- add more angle references to help.
 - Blending quality depends on similarity of lighting/skin tone between the

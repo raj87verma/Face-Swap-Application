@@ -1,10 +1,11 @@
 """
 Widget for the main processing workflow:
   1. Import a video.
-  2. Enable/disable which characters should be swapped in (Person A ->
-     Reference X, Person B -> Reference Y is achieved automatically by the
-     CharacterMatcher during processing; here the user just chooses which
-     known characters participate).
+  2. Enable/disable which characters should be swapped in. If exactly one
+     character is enabled, every detected face in the video is swapped
+     with it. If multiple are enabled, faces are assigned to characters by
+     left-to-right position in the frame, in the order checked here (see
+     VideoProcessor._assign_faces_to_characters for details/limitations).
   3. Run processing with progress feedback.
   4. Export the resulting video.
 """

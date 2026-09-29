@@ -1,8 +1,26 @@
 """
-Ties together face detection, character matching, multi-angle reference
-selection, and the face-swap engine to process an entire video frame by
-frame, then re-muxes the processed video with the original (or
-voice-changed) audio using ffmpeg.
+Ties together face detection, multi-angle reference selection, and the
+face-swap engine to process an entire video frame by frame, then re-muxes
+the processed video with the original (or voice-changed) audio using
+ffmpeg.
+
+Face-to-character assignment strategy
+--------------------------------------
+A reference image is the face you want to swap IN -- it does not depict
+the person currently in the video, so it cannot be used to "recognize"
+who in the video is who (that would require matching the video person's
+own face, which we don't have a photo of). Because of that:
+
+  - If exactly one character is enabled, every detected face in every
+    frame is swapped with that character's reference (no identity
+    decision needed -- there is only one possible target).
+  - If multiple characters are enabled, faces are assigned to characters
+    by their left-to-right horizontal position in the frame, matched
+    against the character list's order. This is a simple, deterministic,
+    classical-CV-friendly heuristic; it assumes people stay in roughly
+    the same left-right order throughout the clip. It will misassign
+    faces if people cross paths or if the number of detected faces
+    doesn't match the number of enabled characters in a given frame.
 """
 import os
 import subprocess
@@ -14,7 +32,6 @@ import cv2
 import numpy as np
 
 from app.core.face_detector import FaceDetector
-from app.core.character_matcher import CharacterMatcher
 from app.core.face_swapper import FaceSwapper
 from app.core.reference_manager import Character
 from app.utils.config import TEMP_DIR, get_ffmpeg_path
@@ -35,7 +52,6 @@ class VideoProcessor:
     def __init__(self, ffmpeg_path: Optional[str] = None):
         self.ffmpeg_path = ffmpeg_path or get_ffmpeg_path()
         self.face_detector = FaceDetector()
-        self.matcher = CharacterMatcher(face_detector=self.face_detector)
         self.swapper = FaceSwapper()
 
     # ------------------------------------------------------------------ #
@@ -54,6 +70,23 @@ class VideoProcessor:
             cache[character.character_id] = {"images": images, "landmarks": landmarks}
         return cache
 
+    @staticmethod
+    def _assign_faces_to_characters(faces, characters: List[Character]):
+        """Decide which detected face (in the current frame) gets swapped
+        with which character's reference face.
+
+        - Exactly one character enabled: swap every detected face with it
+          (no identity decision to make).
+        - Multiple characters enabled: sort faces left-to-right and pair
+          them with characters in the order the user listed/checked them,
+          pairing at most min(len(faces), len(characters)) of each.
+        """
+        if len(characters) == 1:
+            return [(face, characters[0]) for face in faces]
+
+        faces_sorted = sorted(faces, key=lambda f: f.rect[0])  # left-to-right by x
+        return list(zip(faces_sorted, characters))
+
     def process_video(self, input_video_path: str, output_video_path: str,
                        assignments: List[CharacterAssignment],
                        replacement_audio_path: Optional[str] = None,
@@ -68,8 +101,20 @@ class VideoProcessor:
         if not enabled_characters:
             raise ValueError("No enabled characters to swap in.")
 
-        self.matcher.train(enabled_characters)
         ref_cache = self._prepare_reference_cache(enabled_characters)
+        # Drop any enabled character whose reference images yielded no
+        # usable face+landmarks (e.g. a blurry/occluded selfie) so it
+        # doesn't silently block assignment; warn the caller via a plain
+        # print for now (surfaced to the GUI status log by the caller).
+        usable_characters = [
+            c for c in enabled_characters
+            if ref_cache.get(c.character_id, {}).get("landmarks")
+        ]
+        if not usable_characters:
+            raise ValueError(
+                "None of the enabled characters have a usable reference "
+                "image (a face could not be detected in any of them). "
+                "Use a clear, front-facing, well-lit photo.")
 
         cap = cv2.VideoCapture(input_video_path)
         if not cap.isOpened():
@@ -93,15 +138,11 @@ class VideoProcessor:
                     break
                 frame_idx += 1
 
-                faces = self.face_detector.detect(frame)
+                faces = [f for f in self.face_detector.detect(frame) if f.landmarks is not None]
                 if faces:
-                    matches = self.matcher.match_all(frame, faces)
-                    for face, result in matches:
-                        if result.character_id is None or face.landmarks is None:
-                            continue
-                        cache_entry = ref_cache.get(result.character_id)
-                        if not cache_entry or not cache_entry["landmarks"]:
-                            continue
+                    face_to_character = self._assign_faces_to_characters(faces, usable_characters)
+                    for face, character in face_to_character:
+                        cache_entry = ref_cache[character.character_id]
                         best_idx = self.swapper.pick_best_reference(
                             face.landmarks, cache_entry["landmarks"])
                         src_img = cache_entry["images"][best_idx]
